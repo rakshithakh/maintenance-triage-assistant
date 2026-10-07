@@ -1,24 +1,31 @@
 import { useEffect, useState } from 'react';
 
+const me = () => JSON.parse(localStorage.user || 'null');
 const api = async (p, o = {}) => {
-  const r = await fetch('/api' + p, { headers: { 'Content-Type': 'application/json' }, ...o, body: o.body && JSON.stringify(o.body) });
+  const r = await fetch('/api' + p, { headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.token || '') }, ...o, body: o.body && JSON.stringify(o.body) });
   const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && localStorage.token) { localStorage.removeItem('token'); localStorage.removeItem('user'); location.reload(); }
   if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
   return j;
 };
 const when = d => new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 
 export default function App() {
+  const [user, setUser] = useState(me());
   const [list, setList] = useState([]);
   const [sel, setSel] = useState('new');
   const [offline, setOffline] = useState(false);
   const refresh = () => api('/reports').then(l => { setList(l); setOffline(false); }).catch(() => setOffline(true));
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { if (user) refresh(); }, [user]);
+  if (!user) return <Login onAuth={setUser} />;
+  const signOut = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); setUser(null); setSel('new'); setList([]); };
   return (
     <div className="app">
       <aside>
         <div className="brand">Maintenance triage</div>
+        <div className="tag" style={{ padding: '0 8px' }}>{user.name} · {user.role}</div>
         <button className="btn primary" onClick={() => setSel('new')}>New report</button>
+        <button className="btn" onClick={signOut}>Sign out</button>
         {offline && <div className="banner">Can't reach the server. Start the backend on port 4000.</div>}
         <div>{list.length === 0 && !offline && <p className="tag" style={{ padding: '0 10px' }}>No reports yet. Report your first equipment problem.</p>}
           {list.map(r => (
@@ -148,7 +155,7 @@ function Findings({ r, reload }) {
     <div className="card">
       <textarea aria-label="Confirmed finding" placeholder="e.g. Drive-end bearing worn, confirmed by play measurement" value={text} onChange={e => setText(e.target.value)} />
       <div className="row" style={{ marginTop: 8 }}><input aria-label="Technician name" placeholder="Your name" value={tech} onChange={e => setTech(e.target.value)} />
-        <button className="btn" onClick={add}>Record confirmed finding</button></div>
+        <button className="btn" disabled={me()?.role !== 'technician'} onClick={add}>Record confirmed finding</button></div>
       {err && <div className="banner" role="alert">{err}</div>}
     </div></>);
 }
@@ -157,6 +164,7 @@ function Order({ o, reload }) {
   const [d, setD] = useState({ title: o.title, description: o.description, tasks: o.tasks.join('\n'), priority: o.priority });
   const [tech, setTech] = useState(localStorage.tech || ''); const [err, setErr] = useState('');
   const locked = o.status !== 'draft';
+  const ro = me()?.role !== 'technician';
   const run = async (path, method, body) => { try { localStorage.tech = tech; await api(path, { method, body: { technician: tech, ...body } }); setErr(''); reload(); } catch (e) { setErr(e.message); } };
   const tasks = d.tasks.split('\n').map(s => s.trim()).filter(Boolean);
   return (<>
@@ -169,12 +177,40 @@ function Order({ o, reload }) {
       <label htmlFor="wp">Priority</label>
       <select id="wp" disabled={locked} value={d.priority} onChange={e => setD({ ...d, priority: e.target.value })}>{['Low', 'Medium', 'High', 'Urgent'].map(p => <option key={p}>{p}</option>)}</select>
       {!locked && <>
-        <label htmlFor="wn">Technician name</label><input id="wn" placeholder="Required to edit, approve or reject" value={tech} onChange={e => setTech(e.target.value)} />
+        {ro && <div className="banner soft">Only technicians can edit, approve or reject work orders. You are signed in as an operator.</div>}
         {err && <div className="banner" role="alert">{err}</div>}
         <div className="bar">
-          <button className="btn" onClick={() => run(`/work-orders/${o.id}`, 'PATCH', { ...d, tasks })}>Save edits</button>
-          <button className="btn primary" onClick={() => run(`/work-orders/${o.id}/approve`, 'POST', {})}>Approve work order</button>
-          <button className="btn danger" onClick={() => { const reason = prompt('Why are you rejecting this work order?'); if (reason) run(`/work-orders/${o.id}/reject`, 'POST', { reason }); }}>Reject</button>
+          <button className="btn" disabled={ro} onClick={() => run(`/work-orders/${o.id}`, 'PATCH', { ...d, tasks })}>Save edits</button>
+          <button className="btn primary" disabled={ro} onClick={() => run(`/work-orders/${o.id}/approve`, 'POST', {})}>Approve work order</button>
+          <button className="btn danger" disabled={ro} onClick={() => { const reason = prompt('Why are you rejecting this work order?'); if (reason) run(`/work-orders/${o.id}/reject`, 'POST', { reason }); }}>Reject</button>
         </div></>}
     </div></>);
+}
+
+function Login({ onAuth }) {
+  const [mode, setMode] = useState('login');
+  const [f, setF] = useState({ name: '', email: '', password: '', role: 'operator' });
+  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const submit = async e => {
+    e.preventDefault(); setBusy(true); setErr('');
+    try { const r = await api('/auth/' + mode, { method: 'POST', body: f }); localStorage.token = r.token; localStorage.user = JSON.stringify(r.user); onAuth(r.user); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const login = mode === 'login';
+  return (
+    <main style={{ maxWidth: 420, paddingTop: 90 }}>
+      <h1>{login ? 'Sign in' : 'Create your account'}</h1>
+      <p className="sub">Maintenance triage for operators and technicians.</p>
+      <form onSubmit={submit}>
+        {!login && <><label htmlFor="n">Name</label><input id="n" required value={f.name} onChange={e => set('name', e.target.value)} />
+          <label htmlFor="r">Role</label><select id="r" value={f.role} onChange={e => set('role', e.target.value)}>
+            <option value="operator">Operator: reports problems</option><option value="technician">Technician: reviews and approves work</option></select></>}
+        <label htmlFor="em">Email</label><input id="em" type="email" required value={f.email} onChange={e => set('email', e.target.value)} />
+        <label htmlFor="pw">Password</label><input id="pw" type="password" required minLength={8} value={f.password} onChange={e => set('password', e.target.value)} />
+        {err && <div className="banner" role="alert">{err}</div>}
+        <div className="bar"><button className="btn primary" disabled={busy}>{login ? 'Sign in' : 'Create account'}</button>
+          <button type="button" className="btn" onClick={() => { setMode(login ? 'signup' : 'login'); setErr(''); }}>{login ? 'Create an account' : 'I already have an account'}</button></div>
+      </form>
+    </main>);
 }

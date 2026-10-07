@@ -4,9 +4,11 @@ import fs from 'fs';
 import { RULES, runRules, priorityFloor, LEVELS } from './rules.js';
 import { retrieve } from './retrieval.js';
 import { Out, checkCitations, callModel, buildPrompt } from './ai.js';
+import { hash, verify, sign, requireAuth } from './auth.js';
 
 const FILE = './data.json';
 const db = fs.existsSync(FILE) ? JSON.parse(fs.readFileSync(FILE)) : { reports:[], orders:[], findings:[], audit:[] };
+db.users ||= [];
 const save = () => fs.writeFileSync(FILE, JSON.stringify(db, null, 2));
 const uid = p => p + '-' + Math.random().toString(36).slice(2, 8);
 const audit = (action, d = {}) => { const e = { at:new Date().toISOString(), action, ...d }; db.audit.push(e); console.log(JSON.stringify(e)); save(); };
@@ -49,6 +51,25 @@ function applyAnalysis(report, analysis) {
 
 const app = express();
 app.use(cors()); app.use(express.json());
+
+const ROLES = ['operator', 'technician'];
+const pub = u => ({ id:u.id, name:u.name, email:u.email, role:u.role });
+app.post('/api/auth/signup', (req, res) => {
+  const { name, email, password, role } = req.body || {};
+  if (!name?.trim() || !/^\S+@\S+\.\S+$/.test(email || '')) return res.status(400).json({ error:'Enter your name and a valid email.' });
+  if ((password || '').length < 8) return res.status(400).json({ error:'Password must be at least 8 characters.' });
+  if (!ROLES.includes(role)) return res.status(400).json({ error:'Choose a role.' });
+  if (db.users.some(u => u.email === email.toLowerCase())) return res.status(409).json({ error:'An account with this email already exists.' });
+  const u = { id:uid('U'), name:name.trim(), email:email.toLowerCase(), role, passwordHash:hash(password), createdAt:new Date().toISOString() };
+  db.users.push(u); audit('signup', { userId:u.id, role }); res.json({ token:sign(u), user:pub(u) });
+});
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body || {};
+  const u = db.users.find(x => x.email === (email || '').toLowerCase());
+  if (!u || !verify(password || '', u.passwordHash)) { audit('login_failed', { email }); return res.status(401).json({ error:'Wrong email or password.' }); }
+  audit('login', { userId:u.id }); res.json({ token:sign(u), user:pub(u) });
+});
+app.use('/api', requireAuth);
 const find = (req, res) => db.reports.find(r => r.id === req.params.id) || (res.status(404).json({ error:'Report not found' }), null);
 const full = r => ({ ...r, order:db.orders.filter(o => o.reportId === r.id).pop() || null, findings:db.findings.filter(f => f.reportId === r.id) });
 
@@ -61,7 +82,7 @@ app.post('/api/reports', async (req, res) => {
   const b = req.body || {};
   if (!RULES[b.type]) return res.status(400).json({ error:'Choose a supported equipment type.' });
   if (!b.equipmentId?.trim() || !b.issue?.trim()) return res.status(400).json({ error:'Equipment identifier and issue description are required.' });
-  const report = { id:uid('R'), type:b.type, equipmentId:b.equipmentId.trim(), issue:b.issue.trim(), events:(b.events || []).filter(Boolean), readings:b.readings || {}, createdAt:new Date().toISOString() };
+  const report = { id:uid('R'), type:b.type, equipmentId:b.equipmentId.trim(), issue:b.issue.trim(), events:(b.events || []).filter(Boolean), readings:b.readings || {}, createdBy:req.user.name, createdAt:new Date().toISOString() };
   db.reports.push(report); audit('report_created', { reportId:report.id });
   applyAnalysis(report, await analyze(report));
   res.json(full(report));
@@ -72,7 +93,7 @@ app.post('/api/reports/:id/reanalyze', async (req, res) => {
 });
 
 const order = (req, res) => { const o = db.orders.find(x => x.id === req.params.id); if (!o) res.status(404).json({ error:'Work order not found' }); return o; };
-const tech = (req, res) => { const t = req.body?.technician?.trim(); if (!t) res.status(400).json({ error:'Technician name is required. Only a human technician can do this.' }); return t; };
+const tech = (req, res) => { if (req.user.role !== 'technician') { res.status(403).json({ error:'Only a signed-in technician can do this.' }); return null; } return req.user.name; };
 app.patch('/api/work-orders/:id', (req, res) => {
   const o = order(req, res); if (!o) return; const t = tech(req, res); if (!t) return;
   if (o.status !== 'draft') return res.status(409).json({ error:`A ${o.status} work order can no longer be edited.` });
