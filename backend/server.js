@@ -12,7 +12,12 @@ db.users ||= [];
 const save = () => fs.writeFileSync(FILE, JSON.stringify(db, null, 2));
 const uid = p => p + '-' + Math.random().toString(36).slice(2, 8);
 const audit = (action, d = {}) => { const e = { at:new Date().toISOString(), action, ...d }; db.audit.push(e); console.log(JSON.stringify(e)); save(); };
-
+// Demo accounts for reviewers. Recreated on every start because free hosting resets the data file.
+if (process.env.DEMO_PASSWORD) {
+  for (const [name, email, role] of [['Demo Technician', 'technician@demo.com', 'technician'], ['Demo Operator', 'operator@demo.com', 'operator']])
+    if (!db.users.some(u => u.email === email)) db.users.push({ id: uid('U'), name, email, role, passwordHash: hash(process.env.DEMO_PASSWORD), createdAt: new Date().toISOString() });
+  save();
+}
 async function analyze(report) {
   const query = `${report.issue} ${report.events.join(' ')}`;
   const rules = runRules(report.type, report.readings);

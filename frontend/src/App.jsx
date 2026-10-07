@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 const me = () => JSON.parse(localStorage.user || 'null');
 const api = async (p, o = {}) => {
-  const r = await fetch('/api' + p, { headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.token || '') }, ...o, body: o.body && JSON.stringify(o.body) });
+  const r = await fetch((import.meta.env.VITE_API_URL || '') + '/api' + p, { headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.token || '') }, ...o, body: o.body && JSON.stringify(o.body) });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && localStorage.token) { localStorage.removeItem('token'); localStorage.removeItem('user'); location.reload(); }
   if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
@@ -26,7 +26,7 @@ export default function App() {
         <div className="tag" style={{ padding: '0 8px' }}>{user.name} · {user.role}</div>
         <button className="btn primary" onClick={() => setSel('new')}>New report</button>
         <button className="btn" onClick={signOut}>Sign out</button>
-        {offline && <div className="banner">Can't reach the server. Start the backend on port 4000.</div>}
+        {offline && <div className="banner">Can't reach the server. If it was idle, it may be waking up. Try again in about a minute.</div>}
         <div>{list.length === 0 && !offline && <p className="tag" style={{ padding: '0 10px' }}>No reports yet. Report your first equipment problem.</p>}
           {list.map(r => (
             <button key={r.id} className={'item ' + (sel === r.id ? 'on' : '')} onClick={() => setSel(r.id)}>
@@ -145,8 +145,8 @@ function Report({ id, onChange, open }) {
 }
 
 function Findings({ r, reload }) {
-  const [text, setText] = useState(''); const [tech, setTech] = useState(localStorage.tech || ''); const [err, setErr] = useState('');
-  const add = async () => { try { localStorage.tech = tech; await api(`/reports/${r.id}/findings`, { method: 'POST', body: { text, technician: tech } }); setText(''); setErr(''); reload(); } catch (e) { setErr(e.message); } };
+  const [text, setText] = useState(''); const [err, setErr] = useState('');
+  const add = async () => { try { await api(`/reports/${r.id}/findings`, { method: 'POST', body: { text } }); setText(''); setErr(''); reload(); } catch (e) { setErr(e.message); } };
   return (<>
     <h2>Confirmed findings</h2>
     <p className="sub">Only a technician can record what was actually found after inspection.</p>
@@ -154,7 +154,7 @@ function Findings({ r, reload }) {
     {r.findings.map(f => <div key={f.id} className="card stripe good"><span className="pill ok">confirmed</span> {f.text}<div className="tag">{f.confirmedBy} · {when(f.at)}</div></div>)}
     <div className="card">
       <textarea aria-label="Confirmed finding" placeholder="e.g. Drive-end bearing worn, confirmed by play measurement" value={text} onChange={e => setText(e.target.value)} />
-      <div className="row" style={{ marginTop: 8 }}><input aria-label="Technician name" placeholder="Your name" value={tech} onChange={e => setTech(e.target.value)} />
+      <div className="row" style={{ marginTop: 8 }}><span className="tag">{me()?.role === 'technician' ? `Signed in as ${me()?.name}` : 'Only technicians can confirm findings.'}</span>
         <button className="btn" disabled={me()?.role !== 'technician'} onClick={add}>Record confirmed finding</button></div>
       {err && <div className="banner" role="alert">{err}</div>}
     </div></>);
@@ -162,10 +162,10 @@ function Findings({ r, reload }) {
 
 function Order({ o, reload }) {
   const [d, setD] = useState({ title: o.title, description: o.description, tasks: o.tasks.join('\n'), priority: o.priority });
-  const [tech, setTech] = useState(localStorage.tech || ''); const [err, setErr] = useState('');
+  const [err, setErr] = useState('');
   const locked = o.status !== 'draft';
   const ro = me()?.role !== 'technician';
-  const run = async (path, method, body) => { try { localStorage.tech = tech; await api(path, { method, body: { technician: tech, ...body } }); setErr(''); reload(); } catch (e) { setErr(e.message); } };
+  const run = async (path, method, body) => { try { await api(path, { method, body }); setErr(''); reload(); } catch (e) { setErr(e.message); } };
   const tasks = d.tasks.split('\n').map(s => s.trim()).filter(Boolean);
   return (<>
     <h2>Work order <span className={'pill ' + o.status}>{o.status}{o.edited && o.status === 'draft' ? ' · edited' : ''}</span></h2>
