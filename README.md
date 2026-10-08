@@ -1,25 +1,66 @@
 # Equipment Maintenance Triage Assistant
 
-A technician reports an equipment problem. The app runs deterministic threshold checks, retrieves manual sections, asks an AI for **possible** causes, follow-up questions, inspection steps, a priority and a draft work order, with a citation behind every suggestion. A human edits, approves or rejects the work order. The AI never controls equipment and never approves work.
+An AI-assisted equipment maintenance triage application that helps technicians analyze reported equipment issues, identify possible causes, retrieve relevant maintenance guidance, suggest inspection steps, assign a priority, and create a draft work order.
 
-## Run
-```bash
-cd backend && cp .env.example .env   # add ANTHROPIC_API_KEY
-npm install && export $(cat .env | xargs) && npm start   # http://localhost:4000
-cd frontend && npm install && npm run dev                # http://localhost:5173
-cd backend && npm test
-```
+The system combines deterministic engineering rules with retrieval and an AI workflow. AI suggestions are always presented as possible causes/recommendations and require human technician review before a work order can be approved.
 
-## Design
-- `rules.js`: threshold checks in plain code. Handles missing, non-numeric and conflicting sensors (worst value used, conflict flagged). Rules set a priority floor the AI cannot lower.
-- `retrieval.js`: keyword (TF-IDF style) search over `kb.json` manual sections.
-- `ai.js`: model call, Zod schema validation, and rejection of any citation that is not a real source id (manual section, `event:N`, `rule:key`, `issue`).
-- `server.js`: REST API, JSON file storage, audit log. Approve, reject, edit and confirm-finding all require a technician name; approval is never automatic.
-- Observations, possible causes and confirmed findings are stored and shown separately.
-- Failures (no API key, unreachable AI, bad output, bad citations, retrieval error, no manual hits) show a visible banner. Rules and retrieval results still display; the user can retry.
+## Live Application
 
-## Limits
-JSON file storage (swap for SQLite/Postgres for production), no auth, small sample knowledge base, no live IoT.
+Frontend:
+https://maintenance-triage-assistant.vercel.app/
 
-## AI tool usage
-Add a short note here on which AI tools you used and what you reviewed yourself.
+Backend:
+https://maintenance-triage-assistant.onrender.com/
+
+## Problem Selected
+
+Problem 1 — Equipment Maintenance Triage Assistant
+
+## Features
+
+- Equipment issue reporting
+- Deterministic threshold and sensor checks
+- Detection of missing and conflicting sensor readings
+- Retrieval of relevant maintenance manual sections
+- AI-generated possible causes
+- AI-generated follow-up questions
+- Suggested inspection steps
+- Priority recommendation
+- Draft work-order generation
+- Citation-backed AI suggestions
+- Human technician review
+- Technician confirmation of findings
+- Work-order approval and rejection
+- JSON-based persistence
+- Audit/activity logging
+- Error, loading and validation states
+
+## Architecture
+
+The application consists of a React frontend and a Node.js/Express backend.
+
+```text
+User
+  |
+  v
+React Frontend
+  |
+  v
+Node.js / Express API
+  |
+  +--> Deterministic Rules
+  |
+  +--> Knowledge Base Retrieval
+  |
+  +--> Gemini AI
+  |
+  +--> Validation + Citation Checks
+  |
+  +--> JSON Persistence
+  |
+  v
+Technician Review
+  |
+  +--> Confirm Findings
+  +--> Edit Work Order
+  +--> Approve / Reject
